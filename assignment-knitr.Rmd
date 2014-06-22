@@ -1,0 +1,121 @@
+Assignment
+========================================================
+
+Introduction
+-------------
+
+This assignment concerns the prediction of the quality of weight lifting exercises, based on 160 variables. The training set contains 19,622 observations. The dataset is described in [1]. There is also a testing set with 20 observations, predictions of these must be submitted as part of the assignment.
+
+The following libraries are used in the analysis:
+
+```{r cache=FALSE, results='hide'}
+library(downloader)
+library(caret)
+library(randomForest)
+```
+
+
+Preprocessing
+-------------
+
+First we download and read the data of the training and test set:
+
+```{r cache=TRUE}
+destfile = "/tmp/pml-training.csv"
+url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download( url, destfile)
+pml.training <- read.csv(destfile)
+```
+
+```{r cache=TRUE}  
+# pml.testing
+destfile = "/tmp/pml-testing.csv"
+url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download( url, destfile)
+pml.testing <- read.csv(destfile)
+```
+
+Looking at a summary of the data, we find that many of the variables has a great number of NAs and empty values, e.g.:
+```{r cache=FALSE}
+summary(pml.training$kurtosis_roll_belt)
+```
+
+Let's remove columns with NAs and empty row values:
+```{r cache=FALSE}
+emptyOrNA = function(x){
+  is.na(x) || x=="";
+}
+NAs <- apply( pml.training,2,function(x) {sum(emptyOrNA(x))}) 
+train <- pml.training[,which(NAs == 0)]
+test <- pml.testing[,which(NAs == 0)]
+```
+
+We also remove some columns: X and user_name, as these seem problematic to generalize on, and then the columns related to time, that is timestamps and windows (raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window):
+
+```{r cache=FALSE}
+train <- subset(train, select = -c(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window) )
+test <- subset(test, select = -c(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window) )
+```
+
+
+Model
+-----
+
+The goal is to predict a variable, and the focus is not on explaining it in terms of other variables. We have therefore chosen to use random forrest [0] to create a model, as random forrest provides excellent predictions (but is hard to interpret).
+
+When using random forrest, we get an implicit estimate of the out of sample error, in the form of an Out of Bag (OOB) estimate of the error rate, which is similar to an N-fold cross validation (see [1], Section 15.3.1). As this tends to be a bit pessimistic (and to use what we have learned) we will do a 2-fold cross validation to have something to compare the OOB error estimate to.
+
+Let's first split the training set into two folds:
+```{r cache=FALSE}
+set.seed(58)
+indexA = createDataPartition( train$classe, p = 0.5, list=FALSE)
+trainA = train[ indexA, ]
+trainB = train[ -indexA, ]
+```
+
+Then create the random forrest models. One for each fold and one using the whole training set (we start with a small number of trees, to reduce computation time. We can always increase if they seem to perform poorly):
+```{r cache=FALSE}
+set.seed(67)
+n <- 50 
+rf <- randomForest(classe ~ ., data=train, ntree=n, keep.forrest=FALSE )
+rfA <- randomForest(classe ~ ., data=trainA, ntree=n, keep.forrest=FALSE )
+rfB <- randomForest(classe ~ ., data=trainB, ntree=n, keep.forrest=FALSE )
+```
+
+Let's see some details of the model done on the whole set:
+```{r cache=FALSE}
+rf
+```
+
+We can see that the OOB error estimate on the whole training set is 0.47%, which we expect to be a bit pessimistic. Let's compare that to the error rates from the cross validation:
+```{r cache=FALSE}
+rfAB.cm = confusionMatrix( predict(rfA, trainB, type="class"), trainB$classe )
+rfBA.cm = confusionMatrix( predict(rfB, trainA, type="class"), trainA$classe )
+errorRateAB = rfAB.cm$overall[1]
+errorRateBA = rfBA.cm$overall[1]
+unname((1 - errorRateAB)*100)
+unname((1- errorRateBA)*100)
+errorRate = unname((1 - (errorRateAB+errorRateBA)/2)*100)
+errorRate
+```
+
+The mean out of sample error rate from the cross validation is around `r errorRate`%, that is actually a bit higher than the OOB estimate from random forrest model, that we expect to be pessimistic. The explanation for this is that
+using only 2-fold cross validation, the actual out of sample error is expected to be lower (we are only using half the set to train the model). However, we conclude the out of sample error is expected to be low, probably a bit lower than `r errorRate`%.
+
+Prediction
+----------
+
+Here are the final predictions on the test set:
+```{r cache=FALSE}
+pred = predict(rf, test, type="class")
+pred
+```
+
+References
+----------
+
+0. Breiman, Leo (2001). "Random Forests". Machine Learning 45 (1): 5–32. doi:10.1023/A:1010933404324
+
+1. Trevor Hastie, Robert Tibshirani, and Jerome Friedman. The Elements of Statistical Learning. Springer Series in Statistics Springer New York Inc., New York, NY, USA, (2001)
+
+2. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th Augmented Human (AH) International Conference in cooperation with ACM SIGCHI (Augmented Human'13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
